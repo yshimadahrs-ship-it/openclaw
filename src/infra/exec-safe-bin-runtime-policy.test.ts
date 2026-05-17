@@ -8,6 +8,7 @@ import {
   resolveExecSafeBinRuntimePolicy,
   resolveMergedSafeBinProfileFixtures,
 } from "./exec-safe-bin-runtime-policy.js";
+import { isTrustedSafeBinPath } from "./exec-safe-bin-trust.js";
 
 describe("exec safe-bin runtime policy", () => {
   const interpreterCases: Array<{ bin: string; expected: boolean }> = [
@@ -133,6 +134,36 @@ describe("exec safe-bin runtime policy", () => {
     expect(optedIn.trustedSafeBinDirs.has(path.resolve("/opt/homebrew/bin"))).toBe(true);
     expect(optedIn.trustedSafeBinDirs.has(path.resolve("/usr/local/bin"))).toBe(true);
   });
+
+  it.runIf(process.platform !== "win32")(
+    "expands trusted package-manager symlink dirs to current safe-bin target dirs",
+    async () => {
+      await withTempDir({ prefix: "openclaw-safe-bin-trusted-symlink-" }, async (root) => {
+        const trustedDir = path.join(root, "bin");
+        const targetDir = path.join(root, "cellar", "jq", "1.7.1", "bin");
+        const target = path.join(targetDir, "jq");
+        const link = path.join(trustedDir, "jq");
+        await fs.mkdir(trustedDir, { recursive: true });
+        await fs.mkdir(targetDir, { recursive: true });
+        await fs.writeFile(target, "#!/bin/sh\n", "utf8");
+        await fs.symlink(target, link);
+
+        const policy = resolveExecSafeBinRuntimePolicy({
+          local: {
+            safeBins: ["jq"],
+            safeBinTrustedDirs: [trustedDir],
+          },
+        });
+
+        expect(
+          isTrustedSafeBinPath({
+            resolvedPath: await fs.realpath(target),
+            trustedDirs: policy.trustedSafeBinDirs,
+          }),
+        ).toBe(true);
+      });
+    },
+  );
 
   it("emits runtime warning when explicitly trusted dir is writable", async () => {
     if (process.platform === "win32") {
